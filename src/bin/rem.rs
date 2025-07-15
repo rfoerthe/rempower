@@ -1,7 +1,6 @@
 use clap::Parser;
 use colored::*;
 use rempower::cli::{Cli, Commands};
-use std::collections::HashSet;
 use std::error::Error;
 use std::process::Command;
 use std::str;
@@ -12,12 +11,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Dns(args) => _set_pub_dns(args.is_pub_dns())?
+        Commands::Dns(args) => _set_pub_dns(args.is_pub_dns())?,
     }
 
     Ok(())
 }
-
 
 /// Return names of active network interfaces as Vec<String>
 fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
@@ -25,55 +23,54 @@ fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
         .arg("-listallnetworkservices")
         .output()?;
 
-    let output_str = str::from_utf8(&output.stdout)?;
-    let mut active_network_services = Vec::new();
-
-    for line in output_str.trim().lines() {
-        if !line.starts_with("An asterisk") && !line.starts_with("*") {
-            active_network_services.push(line.to_string());
-        }
-    }
+    let output_str = str::from_utf8(&output.stdout)?.trim();
+    let active_network_services: Vec<String> = output_str
+        .lines()
+        .filter(|line| !line.contains("An asterisk") && !line.contains("(*)"))
+        .map(|line| line.trim().to_string())
+        .collect();
 
     Ok(active_network_services)
 }
-
 
 fn _set_pub_dns(enable_pub_dns: bool) -> Result<(), Box<dyn Error>> {
     let networks = active_networks()?;
 
     if enable_pub_dns {
         for network in networks {
-            print!("Enable Public DNS {:?} on device '{}'", PUBLIC_DNS, network);
+            print!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network);
 
-            let mut cmd = Command::new("sudo");
-            cmd.arg("networksetup")
+            Command::new("sudo")
+                .arg("networksetup")
                 .arg("-setdnsservers")
-                .arg(&network);
-
-            for dns in PUBLIC_DNS {
-                cmd.arg(dns);
-            }
-
-            cmd.output()?;
-
-            let dns_output = Command::new("networksetup")
-                .arg("-getdnsservers")
                 .arg(&network)
+                .args(PUBLIC_DNS)
                 .output()?;
 
-            let dns_str = str::from_utf8(&dns_output.stdout)?;
-            let dns_servers: HashSet<&str> = dns_str.split_whitespace().collect();
-            let public_dns_set: HashSet<&str> = PUBLIC_DNS.iter().copied().collect();
+            let current_dns = dns_of_network(&network)?;
 
-            if !public_dns_set.is_disjoint(&dns_servers) {
+            if PUBLIC_DNS
+                .iter()
+                .any(|&public_dns| current_dns.iter().any(|dns| dns == public_dns))
+            {
                 println!("{}", " OK".green());
             } else {
-                println!("{}", format!(" Not OK: {}", dns_str).red());
+                println!(
+                    "{}",
+                    format!(
+                        " Not OK: (These configured DNS servers are not expected {:?})",
+                        current_dns
+                    )
+                    .red()
+                );
             }
         }
     } else {
         for network in networks {
-            print!("Reset DNS on device '{}' and activating DNS servers configured in router", network);
+            print!(
+                "Revert to DHCP-assigned DNS servers on device '{}' ",
+                network
+            );
 
             Command::new("sudo")
                 .arg("networksetup")
@@ -82,20 +79,34 @@ fn _set_pub_dns(enable_pub_dns: bool) -> Result<(), Box<dyn Error>> {
                 .arg("empty")
                 .output()?;
 
-            let dns_output = Command::new("networksetup")
-                .arg("-getdnsservers")
-                .arg(&network)
-                .output()?;
+            let current_dns = dns_of_network(&network)?;
 
-            let dns_str = str::from_utf8(&dns_output.stdout)?;
-
-            if dns_str.starts_with("There aren't any DNS Servers set on") {
+            if current_dns
+                .iter()
+                .any(|dns| dns.contains("There aren't any DNS Servers set on"))
+            {
                 println!("{}", " OK".green());
             } else {
-                println!("{}", format!(" Not OK: {}", dns_str).red());
+                println!(
+                    "{}",
+                    format!(" Not OK (DNS servers still defined: {:?})", current_dns).red()
+                );
             }
         }
     }
 
     Ok(())
+}
+
+fn dns_of_network(network: &String) -> Result<Vec<String>, Box<dyn Error>> {
+    let dns_output = Command::new("networksetup")
+        .arg("-getdnsservers")
+        .arg(&network)
+        .output()?;
+
+    let dns_vec = str::from_utf8(&dns_output.stdout)?
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect();
+    Ok(dns_vec)
 }

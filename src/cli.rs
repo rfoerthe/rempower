@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "rem",
     about = "Rust empowered tools",
+    long_about = None,
     version
 )]
 pub struct Cli {
@@ -13,7 +14,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Manage DNS server settings
+    /// Switch between public DNS servers and those assigned by the DHCP server
     Dns(DnsArgs),
 }
 
@@ -21,17 +22,17 @@ pub enum Commands {
 #[group(required = true, multiple = false)]
 pub struct DnsArgs {
     /// Enable CloudFlare and Google DNS servers
-    #[arg(long)]
-    pub enable: bool,
+    #[arg(long = "pub")]
+    pub pub_dns: bool,
 
-    /// Reset to DNS servers configured in router (disable custom DNS)
-    #[arg(long)]
-    pub reset: bool,
+    /// Revert to DNS servers assigned by the DHCP server.
+    #[arg(long = "dhcp")]
+    pub dhcp: bool,
 }
 
 impl DnsArgs {
     pub fn is_pub_dns(&self) -> bool {
-        self.enable // reset ist false wenn enable true ist (durch ArgGroup)
+        self.pub_dns // dhcp is false when pub_dns is true (via ArgGroup)
     }
 }
 
