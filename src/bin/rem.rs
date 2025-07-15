@@ -38,14 +38,12 @@ fn _set_pub_dns(enable_pub_dns: bool) -> Result<(), Box<dyn Error>> {
 
     if enable_pub_dns {
         for network in networks {
-            print!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network);
+            print!(
+                "Enable public DNS servers {:?} on device '{}'",
+                PUBLIC_DNS, network
+            );
 
-            Command::new("sudo")
-                .arg("networksetup")
-                .arg("-setdnsservers")
-                .arg(&network)
-                .args(PUBLIC_DNS)
-                .output()?;
+            update_dns_servers(&network, PUBLIC_DNS)?;
 
             let current_dns = dns_of_network(&network)?;
 
@@ -72,12 +70,7 @@ fn _set_pub_dns(enable_pub_dns: bool) -> Result<(), Box<dyn Error>> {
                 network
             );
 
-            Command::new("sudo")
-                .arg("networksetup")
-                .arg("-setdnsservers")
-                .arg(&network)
-                .arg("empty")
-                .output()?;
+            update_dns_servers(&network, &["empty"])?;
 
             let current_dns = dns_of_network(&network)?;
 
@@ -95,6 +88,16 @@ fn _set_pub_dns(enable_pub_dns: bool) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    Ok(())
+}
+
+fn update_dns_servers(network: &String, dns_args: &[&str]) -> Result<(), Box<dyn Error>> {
+    Command::new("sudo")
+        .arg("networksetup")
+        .arg("-setdnsservers")
+        .arg(&network)
+        .args(dns_args)
+        .output()?;
     Ok(())
 }
 
