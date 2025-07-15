@@ -25,7 +25,6 @@ pub enum Commands {
     },
 }
 
-
 #[derive(Parser)]
 #[group(required = true, multiple = false)]
 pub struct DnsArgs {
