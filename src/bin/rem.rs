@@ -1,9 +1,10 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{generate, Shell};
 use colored::*;
 use rempower::cli::{Cli, Commands};
 use std::error::Error;
 use std::process::Command;
-use std::str;
+use std::{io, str};
 
 const PUBLIC_DNS: &[&str] = &["1.1.1.1", "8.8.4.4"];
 
@@ -20,10 +21,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 print_current_dns()?;
             }
         }
+        Commands::Completions { shell } => {
+            generate_completions(shell);
+        }
+
     }
 
     Ok(())
 }
+
+fn generate_completions(shell: Shell) {
+    let mut cmd = Cli::command();
+    generate(shell, &mut cmd, "rem", &mut io::stdout());
+}
+
 
 fn print_current_dns() -> Result<(), Box<dyn Error>> {
     let networks = active_networks()?;

@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(
@@ -16,7 +17,14 @@ pub struct Cli {
 pub enum Commands {
     /// Switch between public DNS servers and those assigned by the DHCP server
     Dns(DnsArgs),
+    /// Generate shell completions
+    Completions {
+        /// The shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
+
 
 #[derive(Parser)]
 #[group(required = true, multiple = false)]
