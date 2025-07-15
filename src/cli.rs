@@ -25,9 +25,13 @@ pub struct DnsArgs {
     #[arg(long = "pub")]
     pub pub_dns: bool,
 
-    /// Revert to DNS servers assigned by the DHCP server.
+    /// Revert to DNS servers assigned by the DHCP server
     #[arg(long = "dhcp")]
     pub dhcp: bool,
+
+    /// List active DNS servers
+    #[arg(short,long)]
+    pub list: bool,
 }
 
 impl DnsArgs {
@@ -35,4 +39,3 @@ impl DnsArgs {
         self.pub_dns // dhcp is false when pub_dns is true (via ArgGroup)
     }
 }
-
