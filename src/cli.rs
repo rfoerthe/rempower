@@ -1,10 +1,16 @@
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn get_about() -> String {
+    format!("Rust empowered tools v{}", VERSION)
+}
+
 #[derive(Parser)]
 #[command(
     name = "rem",
-    about = "Rust empowered tools",
+    about = get_about(),
     long_about = None,
     version
 )]
