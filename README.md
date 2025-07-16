@@ -9,7 +9,7 @@ All provided tools are organized as sub commands of `rem`.
 If you're using a DNS forwarder in your local network—often provided by your router—you might occasionally 
 want to bypass it and access public DNS servers directly. 
 In my case, I needed this because I had enabled DNS filtering on my router to block 
-blacklisted and advertising-related domains, which I sometimes want to bypass. 
+harmful and advertising-related domains, which I sometimes want to bypass. 
 
 #### Examples
 
