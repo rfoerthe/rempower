@@ -2,7 +2,7 @@
 Rust-empowered command line tools for macOS
 
 ## Provided Tools
-All provided tools are organized as sub commands of `rem`.
+All provided tools are implemented as subcommands of `rem`.
 
 ### dns
 `dns` lets you easily switch between public DNS servers and those assigned by your local network's DHCP server.
@@ -52,7 +52,7 @@ echo 'eval "$(rem completions bash)"' >> ~/.bashrc
 ```
 
 #### Zsh
-```zsh
+```shell
 # Temporarily for current session
 eval "$(rem completions zsh)"
 
