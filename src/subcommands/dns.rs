@@ -3,7 +3,7 @@ use colored::Colorize;
 use std::error::Error;
 use std::process::Command;
 
-const PUBLIC_DNS: &[&str] = &["1.1.1.1", "8.8.4.4"];
+const PUBLIC_DNS: &[&str] = &["1.1.1.1", "2606:4700:4700::1111", "8.8.4.4", "2001:4860:4860::8844"];
 
 pub fn perform(args: DnsArgs) -> Result<(), Box<dyn Error>> {
     if args.dhcp {
