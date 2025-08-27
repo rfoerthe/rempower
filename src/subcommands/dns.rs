@@ -7,9 +7,9 @@ const PUBLIC_DNS: &[&str] = &["1.1.1.1", "2606:4700:4700::1111", "8.8.4.4", "200
 
 pub fn perform(args: DnsArgs) -> Result<(), Box<dyn Error>> {
     if args.dhcp {
-        switch_dns(false)?;
+        enable_dhcp_dns()?;
     } else if args.pub_dns {
-        switch_dns(true)?;
+        enable_pub_dns()?;
     } else if args.list {
         print_current_dns()?;
     }
@@ -42,52 +42,56 @@ fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
     Ok(active_network_services)
 }
 
-fn switch_dns(enable_pub_dns: bool) -> Result<(), Box<dyn Error>> {
+fn enable_pub_dns() -> Result<(), Box<dyn Error>> {
     let networks = active_networks()?;
 
-    if enable_pub_dns {
-        for network in networks {
-            print!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network);
+    for network in networks {
+        print!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network);
 
-            update_dns_servers(&network, PUBLIC_DNS)?;
+        update_dns_servers(&network, PUBLIC_DNS)?;
 
-            let current_dns = manual_dns_of_network(&network)?;
+        let current_dns = manual_dns_of_network(&network)?;
 
-            if PUBLIC_DNS
-                .iter()
-                .any(|&public_dns| current_dns.iter().any(|dns| dns == public_dns))
-            {
-                println!("{}", " OK".green());
-            } else {
-                println!(
-                    "{}",
-                    format!(
-                        " Not OK: (These configured DNS servers are not expected {:?})",
-                        current_dns
-                    )
-                        .red()
-                );
-            }
+        if PUBLIC_DNS
+            .iter()
+            .any(|&public_dns| current_dns.iter().any(|dns| dns == public_dns))
+        {
+            println!("{}", " OK".green());
+        } else {
+            println!(
+                "{}",
+                format!(
+                    " Not OK: (These configured DNS servers are not expected {:?})",
+                    current_dns
+                )
+                .red()
+            );
         }
-    } else {
-        for network in networks {
-            print!("Revert to DHCP-assigned DNS servers on device '{}' ", network);
+    }
 
-            update_dns_servers(&network, &["empty"])?;
+    Ok(())
+}
 
-            let current_dns = manual_dns_of_network(&network)?;
+fn enable_dhcp_dns() -> Result<(), Box<dyn Error>> {
+    let networks = active_networks()?;
 
-            if current_dns
-                .iter()
-                .any(|dns| dns.contains("There aren't any DNS Servers set on"))
-            {
-                println!("{}", " OK".green());
-            } else {
-                println!(
-                    "{}",
-                    format!(" Not OK (DNS servers still defined: {:?})", current_dns).red()
-                );
-            }
+    for network in networks {
+        print!("Revert to DHCP-assigned DNS servers on device '{}' ", network);
+
+        update_dns_servers(&network, &["empty"])?;
+
+        let current_dns = manual_dns_of_network(&network)?;
+
+        if current_dns
+            .iter()
+            .any(|dns| dns.contains("There aren't any DNS Servers set on"))
+        {
+            println!("{}", " OK".green());
+        } else {
+            println!(
+                "{}",
+                format!(" Not OK (DNS servers still defined: {:?})", current_dns).red()
+            );
         }
     }
 
