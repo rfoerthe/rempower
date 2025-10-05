@@ -46,9 +46,3 @@ pub struct DnsArgs {
     #[arg(short,long)]
     pub list: bool,
 }
-
-impl DnsArgs {
-    pub fn is_pub_dns(&self) -> bool {
-        self.pub_dns // dhcp is false when pub_dns is true (via ArgGroup)
-    }
-}

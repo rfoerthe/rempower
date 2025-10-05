@@ -5,6 +5,20 @@ use std::process::Command;
 
 const PUBLIC_DNS: &[&str] = &["1.1.1.1", "2606:4700:4700::1111", "8.8.4.4", "2001:4860:4860::8844"];
 
+/// Performs DNS configuration operations based on the provided arguments.
+///
+/// This function handles three operations:
+/// - Switching to public DNS servers (CloudFlare and Google)
+/// - Reverting to DHCP-assigned DNS servers
+/// - Listing currently configured DNS servers
+///
+/// # Arguments
+///
+/// * `args` - DNS operation arguments from the command line
+///
+/// # Errors
+///
+/// Returns an error if the DNS configuration update fails or if network commands fail.
 pub fn perform(args: DnsArgs) -> Result<(), Box<dyn Error>> {
     if args.dhcp {
         enable_dhcp_dns()?;
@@ -43,68 +57,80 @@ fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
 }
 
 fn enable_pub_dns() -> Result<(), Box<dyn Error>> {
-    let networks = active_networks()?;
-
-    for network in networks {
-        print!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network);
-
-        update_dns_servers(&network, PUBLIC_DNS)?;
-
-        let current_dns = manual_dns_of_network(&network)?;
-
-        if PUBLIC_DNS
-            .iter()
-            .any(|&public_dns| current_dns.iter().any(|dns| dns == public_dns))
-        {
-            println!("{}", " OK".green());
-        } else {
-            println!(
-                "{}",
-                format!(
-                    " Not OK: (These configured DNS servers are not expected {:?})",
-                    current_dns
-                )
-                .red()
-            );
-        }
-    }
-
-    Ok(())
+    apply_dns_config(
+        PUBLIC_DNS,
+        |network| format!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network),
+        |current_dns| {
+            PUBLIC_DNS
+                .iter()
+                .all(|&public_dns| current_dns.iter().any(|dns| dns == public_dns))
+        },
+        |current_dns| {
+            format!(
+                " Not OK: (Expected all {:?}, but got {:?})",
+                PUBLIC_DNS, current_dns
+            )
+        },
+    )
 }
 
 fn enable_dhcp_dns() -> Result<(), Box<dyn Error>> {
+    apply_dns_config(
+        &["empty"],
+        |network| format!("Revert to DHCP-assigned DNS servers on device '{}' ", network),
+        |current_dns| {
+            current_dns
+                .iter()
+                .any(|dns| dns.contains("There aren't any DNS Servers set on"))
+        },
+        |current_dns| format!(" Not OK (DNS servers still defined: {:?})", current_dns),
+    )
+}
+
+/// Helper function to apply DNS configuration to all active networks
+fn apply_dns_config<F, V, E>(
+    dns_servers: &[&str],
+    format_msg: F,
+    validate: V,
+    error_msg: E,
+) -> Result<(), Box<dyn Error>>
+where
+    F: Fn(&str) -> String,
+    V: Fn(&[String]) -> bool,
+    E: Fn(&[String]) -> String,
+{
     let networks = active_networks()?;
 
     for network in networks {
-        print!("Revert to DHCP-assigned DNS servers on device '{}' ", network);
+        print!("{}", format_msg(&network));
 
-        update_dns_servers(&network, &["empty"])?;
+        update_dns_servers(&network, dns_servers)?;
 
         let current_dns = manual_dns_of_network(&network)?;
 
-        if current_dns
-            .iter()
-            .any(|dns| dns.contains("There aren't any DNS Servers set on"))
-        {
+        if validate(&current_dns) {
             println!("{}", " OK".green());
         } else {
-            println!(
-                "{}",
-                format!(" Not OK (DNS servers still defined: {:?})", current_dns).red()
-            );
+            println!("{}", error_msg(&current_dns).red());
         }
     }
 
     Ok(())
 }
 
-fn update_dns_servers(network: &String, dns_args: &[&str]) -> Result<(), Box<dyn Error>> {
-    Command::new("sudo")
+fn update_dns_servers(network: &str, dns_args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let output = Command::new("sudo")
         .arg("networksetup")
         .arg("-setdnsservers")
         .arg(&network)
         .args(dns_args)
         .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to update DNS servers: {}", stderr).into());
+    }
+
     Ok(())
 }
 
