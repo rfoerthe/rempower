@@ -24,6 +24,9 @@ use std::process::Command;
 
 /// Public DNS servers (CloudFlare and Google with IPv4 and IPv6)
 const PUBLIC_DNS: &[&str] = &["1.1.1.1", "2606:4700:4700::1111", "8.8.4.4", "2001:4860:4860::8844"];
+const NETWORKSETUP: &str = "/usr/sbin/networksetup";
+const SCUTIL: &str = "/usr/sbin/scutil";
+const SUDO: &str = "/usr/bin/sudo";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ManualDns {
@@ -82,7 +85,7 @@ fn print_current_dns() -> Result<(), Box<dyn Error>> {
 ///
 /// Returns an error if the networksetup command fails or output cannot be parsed.
 fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
-    let mut command = Command::new("networksetup");
+    let mut command = Command::new(NETWORKSETUP);
     command.arg("-listallnetworkservices");
 
     let output = command_stdout(&mut command, "list network services")?;
@@ -188,8 +191,8 @@ where
 ///
 /// Returns an error if the networksetup command fails.
 fn update_dns_servers(network: &str, dns_args: &[&str]) -> Result<(), Box<dyn Error>> {
-    let output = Command::new("sudo")
-        .arg("networksetup")
+    let output = Command::new(SUDO)
+        .arg(NETWORKSETUP)
         .arg("-setdnsservers")
         .arg(network)
         .args(dns_args)
@@ -224,7 +227,7 @@ fn update_dns_servers(network: &str, dns_args: &[&str]) -> Result<(), Box<dyn Er
 ///
 /// Returns an error if the networksetup command fails.
 fn manual_dns_of_network(network: &str) -> Result<ManualDns, Box<dyn Error>> {
-    let mut command = Command::new("networksetup");
+    let mut command = Command::new(NETWORKSETUP);
     command.arg("-getdnsservers").arg(network);
 
     let output = command_stdout(&mut command, &format!("get DNS servers for '{network}'"))?;
@@ -251,7 +254,7 @@ fn current_dns_servers(network: &str) -> Result<Vec<String>, Box<dyn Error>> {
     match manual_dns_of_network(network)? {
         ManualDns::Servers(dns_servers) => Ok(dns_servers),
         ManualDns::Dhcp => {
-            let mut command = Command::new("scutil");
+            let mut command = Command::new(SCUTIL);
             command.arg("--dns");
 
             let output = command_stdout(&mut command, "read DHCP DNS configuration")?;
