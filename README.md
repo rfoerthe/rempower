@@ -91,17 +91,29 @@ echo 'eval "$(rem completions bash)"' >> ~/.bashrc
 ### Zsh
 
 ```shell
-# Current session
-eval "$(rem completions zsh)"
+# Create a completion directory if needed
+mkdir -p ~/.zsh/completions
 
-# Permanent setup
-echo 'eval "$(rem completions zsh)"' >> ~/.zshrc
-
-# Or save to a completion directory
+# Generate the completion file
 rem completions zsh > ~/.zsh/completions/_rem
 ```
 
-For zsh completion files, make sure `compinit` is enabled in your shell configuration.
+Make sure the completion directory is in `fpath` before `compinit` runs in your `.zshrc`:
+
+```shell
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+If completion still looks for an old function name, rebuild zsh's completion cache:
+
+```shell
+rm -f ~/.zcompdump*
+exec zsh
+```
+
+For example, this is needed if zsh reports `_rempower: function definition file not found`.
 
 ### Fish
 
