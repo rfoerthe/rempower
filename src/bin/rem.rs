@@ -4,7 +4,7 @@
 //! and dispatches to the appropriate subcommand handler.
 
 use clap::{CommandFactory, Parser};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use rempower::cli::{Cli, Commands};
 use rempower::subcommands::dns::perform;
 use std::error::Error;
@@ -27,7 +27,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Completions { shell } => {
             generate_completions(shell);
         }
-
     }
 
     Ok(())

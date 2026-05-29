@@ -1,104 +1,143 @@
 # Rempower
-Rust-empowered command line tools for macOS
 
-## Provided Tools
-All provided tools are implemented as subcommands of `rem`.
+Rust-empowered command line tools for macOS.
 
-### dns
-`dns` lets you easily switch between public DNS servers and those assigned by your local network's DHCP server.
-If you're using a DNS forwarder in your local network—often provided by your router—you might occasionally 
-want to bypass it and access public DNS servers directly. 
-In my case, I needed this because I had enabled DNS filtering on my router to block 
-harmful and advertising-related domains, which I sometimes want to bypass. 
+Rempower installs the `rem` binary. Each utility is exposed as a subcommand.
 
-#### Examples
+## Requirements
 
-Lists active DNS servers:
-```zsh
-rem dns -l
+- macOS
+- Rust toolchain 1.88, managed through `rust-toolchain.toml`
+- `sudo` privileges for commands that modify system settings
+
+## Installation
+
+Build and install the binary from this repository:
+
+```shell
+cargo install --path .
 ```
 
-Use public DNS servers from CloudFlare and Google exclusively
-```zsh
-rem dns --pub 
+For local development, run the binary without installing it:
+
+```shell
+cargo run -- <command>
 ```
 
-Revert to DNS servers assigned by the DHCP server
-```zsh
+## Usage
+
+```shell
+rem dns --list
+rem dns --pub
 rem dns --dhcp
+rem completions zsh
 ```
+
+Show available commands:
+
+```shell
+rem --help
+```
+
+Show DNS command options:
+
+```shell
+rem dns --help
+```
+
+## Tools
+
+### `dns`
+
+Switch DNS settings for active macOS network services.
+
+This is useful when you normally use DNS servers assigned by DHCP, such as a router or local DNS forwarder, but occasionally want to bypass them with public DNS servers.
+
+Options:
+
+- `rem dns --list`: list currently active DNS servers
+- `rem dns --pub`: set public DNS servers manually
+- `rem dns --dhcp`: clear manually configured DNS servers and use DHCP-provided DNS again
+
+`--pub` configures these public DNS servers:
+
+- Cloudflare IPv4: `1.1.1.1`
+- Cloudflare IPv6: `2606:4700:4700::1111`
+- Google IPv4: `8.8.4.4`
+- Google IPv6: `2001:4860:4860::8844`
+
+Changing DNS settings uses macOS `networksetup` through `sudo`.
 
 ## Shell Completions
 
-`rem` supports shell completions for various shells to help you use commands and options more efficiently.
+`rem` can generate shell completions for:
 
-### Supported Shells
+- bash
+- elvish
+- fish
+- powershell
+- zsh
 
-- **bash**
-- **elvish**
-- **fish**
-- **powershell**
-- **zsh**
+### Bash
 
-### Installation
-
-#### Bash
 ```bash
-# Temporarily for current session
+# Current session
 eval "$(rem completions bash)"
 
-# Permanently - add this to your ~/.bashrc
+# Permanent setup
 echo 'eval "$(rem completions bash)"' >> ~/.bashrc
 ```
 
-#### Zsh
+### Zsh
+
 ```shell
-# Temporarily for current session
+# Current session
 eval "$(rem completions zsh)"
 
-# Permanently - add this to your ~/.zshrc
+# Permanent setup
 echo 'eval "$(rem completions zsh)"' >> ~/.zshrc
 
 # Or save to a completion directory
 rem completions zsh > ~/.zsh/completions/_rem
 ```
 
-#### Fish
+For zsh completion files, make sure `compinit` is enabled in your shell configuration.
+
+### Fish
+
 ```shell
-# Generate completion file
 rem completions fish > ~/.config/fish/completions/rem.fish
 ```
 
-#### PowerShell
+### PowerShell
+
 ```shell
-# Temporarily for current session
+# Current session
 rem completions powershell | Out-String | Invoke-Expression
 
-# Permanently - add this to your PowerShell profile
+# Permanent setup
 Add-Content -Path $PROFILE -Value 'rem completions powershell | Out-String | Invoke-Expression'
 ```
 
-#### Elvish
+### Elvish
+
 ```shell
-# Generate completion file
 rem completions elvish > ~/.config/elvish/completions/rem.elv
 ```
 
-### Usage
-After installation, you can use the Tab key to:
-- Complete available commands
-- Show options and flags
-- Complete arguments
+## Development
 
-Example:
+Run the standard checks before committing:
 
 ```shell
-rem <TAB>          # Shows available commands
-rem dns <TAB>      # Shows DNS options
-rem dns --<TAB>    # Shows available flags
+cargo fmt --check
+cargo check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
 ```
 
-### Notes
-- Start a new shell session or reload your configuration after installation
-- If you encounter issues, verify that your shell supports completions
-- For zsh, ensure that `compinit` is enabled in your `.zshrc`
+The GitHub Actions workflow in `.github/workflows/rust.yml` runs formatting, check, clippy, build, and tests for pushes and pull requests targeting `master`.
+
+## License
+
+See `LICENSE`.

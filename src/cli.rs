@@ -11,7 +11,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Generates the about text with version information
 fn get_about() -> String {
-    format!("Rust empowered tools v{}", VERSION)
+    format!("Rust empowered tools v{VERSION}")
 }
 
 /// Root CLI structure
@@ -61,6 +61,6 @@ pub struct DnsArgs {
     pub dhcp: bool,
 
     /// List active DNS servers
-    #[arg(short,long)]
+    #[arg(short, long)]
     pub list: bool,
 }

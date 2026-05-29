@@ -18,11 +18,18 @@
 
 use crate::cli::DnsArgs;
 use colored::Colorize;
+use std::collections::HashSet;
 use std::error::Error;
 use std::process::Command;
 
 /// Public DNS servers (CloudFlare and Google with IPv4 and IPv6)
 const PUBLIC_DNS: &[&str] = &["1.1.1.1", "2606:4700:4700::1111", "8.8.4.4", "2001:4860:4860::8844"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ManualDns {
+    Servers(Vec<String>),
+    Dhcp,
+}
 
 /// Performs DNS configuration operations based on the provided arguments.
 ///
@@ -60,7 +67,7 @@ fn print_current_dns() -> Result<(), Box<dyn Error>> {
 
     for network in networks {
         let dns_servers = current_dns_servers(&network)?;
-        println!("{:>30} : {:?}", network, dns_servers);
+        println!("{network:>30} : {dns_servers:?}");
     }
 
     Ok(())
@@ -75,16 +82,11 @@ fn print_current_dns() -> Result<(), Box<dyn Error>> {
 ///
 /// Returns an error if the networksetup command fails or output cannot be parsed.
 fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
-    let output = Command::new("networksetup").arg("-listallnetworkservices").output()?;
+    let mut command = Command::new("networksetup");
+    command.arg("-listallnetworkservices");
 
-    let output_str = str::from_utf8(&output.stdout)?.trim();
-    let active_network_services: Vec<String> = output_str
-        .lines()
-        .filter(|line| !line.contains("An asterisk") && !line.contains("(*)"))
-        .map(|line| line.trim().to_string())
-        .collect();
-
-    Ok(active_network_services)
+    let output = command_stdout(&mut command, "list network services")?;
+    Ok(parse_network_services(&output))
 }
 
 /// Enables public DNS servers on all active network interfaces
@@ -98,18 +100,14 @@ fn active_networks() -> Result<Vec<String>, Box<dyn Error>> {
 fn enable_pub_dns() -> Result<(), Box<dyn Error>> {
     apply_dns_config(
         PUBLIC_DNS,
-        |network| format!("Enable public DNS servers {:?} on device '{}'", PUBLIC_DNS, network),
-        |current_dns| {
-            PUBLIC_DNS
+        |network| format!("Enable public DNS servers {PUBLIC_DNS:?} on device '{network}'"),
+        |manual_dns| match manual_dns {
+            ManualDns::Servers(current_dns) => PUBLIC_DNS
                 .iter()
-                .all(|&public_dns| current_dns.iter().any(|dns| dns == public_dns))
+                .all(|&public_dns| current_dns.iter().any(|dns| dns == public_dns)),
+            ManualDns::Dhcp => false,
         },
-        |current_dns| {
-            format!(
-                " Not OK: (Expected all {:?}, but got {:?})",
-                PUBLIC_DNS, current_dns
-            )
-        },
+        |manual_dns| format!(" Not OK: (Expected all {PUBLIC_DNS:?}, but got {manual_dns:?})"),
     )
 }
 
@@ -124,13 +122,9 @@ fn enable_pub_dns() -> Result<(), Box<dyn Error>> {
 fn enable_dhcp_dns() -> Result<(), Box<dyn Error>> {
     apply_dns_config(
         &["empty"],
-        |network| format!("Revert to DHCP-assigned DNS servers on device '{}' ", network),
-        |current_dns| {
-            current_dns
-                .iter()
-                .any(|dns| dns.contains("There aren't any DNS Servers set on"))
-        },
-        |current_dns| format!(" Not OK (DNS servers still defined: {:?})", current_dns),
+        |network| format!("Revert to DHCP-assigned DNS servers on device '{network}' "),
+        |manual_dns| matches!(manual_dns, ManualDns::Dhcp),
+        |manual_dns| format!(" Not OK (DNS servers still defined: {manual_dns:?})"),
     )
 }
 
@@ -156,8 +150,8 @@ fn apply_dns_config<F, V, E>(
 ) -> Result<(), Box<dyn Error>>
 where
     F: Fn(&str) -> String,
-    V: Fn(&[String]) -> bool,
-    E: Fn(&[String]) -> String,
+    V: Fn(&ManualDns) -> bool,
+    E: Fn(&ManualDns) -> String,
 {
     let networks = active_networks()?;
 
@@ -166,12 +160,14 @@ where
 
         update_dns_servers(&network, dns_servers)?;
 
-        let current_dns = manual_dns_of_network(&network)?;
+        let manual_dns = manual_dns_of_network(&network)?;
 
-        if validate(&current_dns) {
+        if validate(&manual_dns) {
             println!("{}", " OK".green());
         } else {
-            println!("{}", error_msg(&current_dns).red());
+            let message = error_msg(&manual_dns);
+            println!("{}", message.red());
+            return Err(format!("DNS validation failed for '{network}': {}", message.trim()).into());
         }
     }
 
@@ -195,13 +191,18 @@ fn update_dns_servers(network: &str, dns_args: &[&str]) -> Result<(), Box<dyn Er
     let output = Command::new("sudo")
         .arg("networksetup")
         .arg("-setdnsservers")
-        .arg(&network)
+        .arg(network)
         .args(dns_args)
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to update DNS servers: {}", stderr).into());
+        return Err(format!(
+            "Failed to update DNS servers with status {}: {}",
+            output.status,
+            stderr.trim()
+        )
+        .into());
     }
 
     Ok(())
@@ -217,22 +218,17 @@ fn update_dns_servers(network: &str, dns_args: &[&str]) -> Result<(), Box<dyn Er
 ///
 /// # Returns
 ///
-/// Vector of DNS server addresses, or a message indicating no manual DNS is set.
+/// Manual DNS state for the requested network service.
 ///
 /// # Errors
 ///
 /// Returns an error if the networksetup command fails.
-fn manual_dns_of_network(network: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let dns_output = Command::new("networksetup")
-        .arg("-getdnsservers")
-        .arg(&network)
-        .output()?;
+fn manual_dns_of_network(network: &str) -> Result<ManualDns, Box<dyn Error>> {
+    let mut command = Command::new("networksetup");
+    command.arg("-getdnsservers").arg(network);
 
-    let dns_vec = str::from_utf8(&dns_output.stdout)?
-        .lines()
-        .map(|line| line.trim().to_string())
-        .collect();
-    Ok(dns_vec)
+    let output = command_stdout(&mut command, &format!("get DNS servers for '{network}'"))?;
+    Ok(parse_manual_dns_output(&output))
 }
 
 /// Gets current DNS servers for a network interface
@@ -252,54 +248,141 @@ fn manual_dns_of_network(network: &str) -> Result<Vec<String>, Box<dyn Error>> {
 ///
 /// Returns an error if system commands fail.
 fn current_dns_servers(network: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let dns_result = manual_dns_of_network(network)?;
+    match manual_dns_of_network(network)? {
+        ManualDns::Servers(dns_servers) => Ok(dns_servers),
+        ManualDns::Dhcp => {
+            let mut command = Command::new("scutil");
+            command.arg("--dns");
 
-    // If DNS servers aren't configured manually, check DHCP-DNS
-    if dns_result
-        .iter()
-        .any(|dns| dns.contains("There aren't any DNS Servers set on"))
-    {
-        let scutil_output = Command::new("scutil").arg("--dns").output()?;
-        let scutil_str = str::from_utf8(&scutil_output.stdout)?;
-        let dns_servers = extract_dns_from_scutil(scutil_str)?;
-        if dns_servers.is_empty() {
-            Ok(dns_result)
-        } else {
-            Ok(dns_servers)
+            let output = command_stdout(&mut command, "read DHCP DNS configuration")?;
+            Ok(parse_scutil_dns_servers(&output))
         }
-    } else {
-        Ok(dns_result)
     }
 }
 
-/// Extracts DNS server addresses from `scutil --dns` output
-///
-/// Parses the output to find nameserver entries and deduplicate them.
-///
-/// # Arguments
-///
-/// * `scutil_output` - Output from `scutil --dns` command
-///
-/// # Returns
-///
-/// Vector of unique DNS server addresses found in the output.
-///
-/// # Errors
-///
-/// Returns an error if parsing fails.
-fn extract_dns_from_scutil(scutil_output: &str) -> Result<Vec<String>, Box<dyn Error>> {
+fn command_stdout(command: &mut Command, description: &str) -> Result<String, Box<dyn Error>> {
+    let output = command.output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("{description} failed with status {}: {}", output.status, stderr.trim()).into());
+    }
+
+    Ok(str::from_utf8(&output.stdout)?.to_string())
+}
+
+fn parse_network_services(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with("An asterisk"))
+        .filter(|line| !line.starts_with('*'))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn parse_manual_dns_output(output: &str) -> ManualDns {
+    let dns_servers: Vec<String> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    if dns_servers
+        .iter()
+        .any(|dns| dns.starts_with("There aren't any DNS Servers set on"))
+    {
+        ManualDns::Dhcp
+    } else {
+        ManualDns::Servers(dns_servers)
+    }
+}
+
+fn parse_scutil_dns_servers(scutil_output: &str) -> Vec<String> {
     let mut dns_servers = Vec::new();
+    let mut seen = HashSet::new();
 
     for line in scutil_output.lines() {
         if line.trim().starts_with("nameserver[") {
             if let Some((_, ip_part)) = line.split_once(':') {
                 let ip = ip_part.trim().to_string();
-                if !dns_servers.contains(&ip) {
+                if seen.insert(ip.clone()) {
                     dns_servers.push(ip);
                 }
             }
         }
     }
 
-    Ok(dns_servers)
+    dns_servers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_network_services_skips_legend_and_disabled_services() {
+        let output = "\
+An asterisk (*) denotes that a network service is disabled.
+Wi-Fi
+*Bluetooth PAN
+USB 10/100/1000 LAN
+";
+
+        assert_eq!(
+            parse_network_services(output),
+            vec!["Wi-Fi".to_string(), "USB 10/100/1000 LAN".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_manual_dns_output_detects_dhcp_state() {
+        let output = "There aren't any DNS Servers set on Wi-Fi.\n";
+
+        assert_eq!(parse_manual_dns_output(output), ManualDns::Dhcp);
+    }
+
+    #[test]
+    fn parse_manual_dns_output_returns_servers() {
+        let output = "\
+1.1.1.1
+2606:4700:4700::1111
+8.8.4.4
+";
+
+        assert_eq!(
+            parse_manual_dns_output(output),
+            ManualDns::Servers(vec![
+                "1.1.1.1".to_string(),
+                "2606:4700:4700::1111".to_string(),
+                "8.8.4.4".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_scutil_dns_servers_deduplicates_preserving_order() {
+        let output = "\
+DNS configuration
+
+resolver #1
+  nameserver[0] : 192.168.1.1
+  nameserver[1] : 1.1.1.1
+
+resolver #2
+  nameserver[0] : 1.1.1.1
+  nameserver[1] : 2606:4700:4700::1111
+";
+
+        assert_eq!(
+            parse_scutil_dns_servers(output),
+            vec![
+                "192.168.1.1".to_string(),
+                "1.1.1.1".to_string(),
+                "2606:4700:4700::1111".to_string()
+            ]
+        );
+    }
 }
