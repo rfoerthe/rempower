@@ -7,7 +7,6 @@ Rempower installs the `rem` binary. Each utility is exposed as a subcommand.
 ## Requirements
 
 - macOS
-- Rust toolchain 1.88, managed through `rust-toolchain.toml`
 - `sudo` privileges for commands that modify system settings
 
 ## Installation

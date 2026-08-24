@@ -7,7 +7,7 @@
 //! # System Requirements
 //!
 //! - macOS operating system
-//! - sudo privileges for modifying DNS settings
+//! - Sudo privileges for modifying DNS settings
 //!
 //! # System Commands Used
 //!
@@ -104,12 +104,7 @@ fn enable_pub_dns() -> Result<(), Box<dyn Error>> {
     apply_dns_config(
         PUBLIC_DNS,
         |network| format!("Enable public DNS servers {PUBLIC_DNS:?} on device '{network}'"),
-        |manual_dns| match manual_dns {
-            ManualDns::Servers(current_dns) => PUBLIC_DNS
-                .iter()
-                .all(|&public_dns| current_dns.iter().any(|dns| dns == public_dns)),
-            ManualDns::Dhcp => false,
-        },
+        pub_dns_valid,
         |manual_dns| format!(" Not OK: (Expected all {PUBLIC_DNS:?}, but got {manual_dns:?})"),
     )
 }
@@ -129,6 +124,16 @@ fn enable_dhcp_dns() -> Result<(), Box<dyn Error>> {
         |manual_dns| matches!(manual_dns, ManualDns::Dhcp),
         |manual_dns| format!(" Not OK (DNS servers still defined: {manual_dns:?})"),
     )
+}
+
+/// True when the given manual DNS state already contains every public DNS server.
+fn pub_dns_valid(manual_dns: &ManualDns) -> bool {
+    match manual_dns {
+        ManualDns::Servers(current_dns) => PUBLIC_DNS
+            .iter()
+            .all(|&public_dns| current_dns.iter().any(|dns| dns == public_dns)),
+        ManualDns::Dhcp => false,
+    }
 }
 
 /// Helper function to apply DNS configuration to all active networks
@@ -191,22 +196,14 @@ where
 ///
 /// Returns an error if the networksetup command fails.
 fn update_dns_servers(network: &str, dns_args: &[&str]) -> Result<(), Box<dyn Error>> {
-    let output = Command::new(SUDO)
+    let mut command = Command::new(SUDO);
+    command
         .arg(NETWORKSETUP)
         .arg("-setdnsservers")
         .arg(network)
-        .args(dns_args)
-        .output()?;
+        .args(dns_args);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Failed to update DNS servers with status {}: {}",
-            output.status,
-            stderr.trim()
-        )
-        .into());
-    }
+    command_stdout(&mut command, &format!("update DNS servers on '{network}'"))?;
 
     Ok(())
 }
@@ -264,7 +261,7 @@ fn current_dns_servers(network: &str) -> Result<Vec<String>, Box<dyn Error>> {
 }
 
 fn command_stdout(command: &mut Command, description: &str) -> Result<String, Box<dyn Error>> {
-    let output = command.output()?;
+    let output = exec(command)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -274,24 +271,36 @@ fn command_stdout(command: &mut Command, description: &str) -> Result<String, Bo
     Ok(str::from_utf8(&output.stdout)?.to_string())
 }
 
-fn parse_network_services(output: &str) -> Vec<String> {
+/// Executes a command, delegating to the stubbed runner when testing.
+fn exec(command: &mut Command) -> Result<std::process::Output, Box<dyn Error>> {
+    #[cfg(test)]
+    {
+        if let Some(front) = tests::next_output() {
+            return Ok(front);
+        }
+    }
+    Ok(command.output()?)
+}
+
+fn trimmed_lines(output: &str) -> Vec<String> {
     output
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .filter(|line| !line.starts_with("An asterisk"))
-        .filter(|line| !line.starts_with('*'))
         .map(ToOwned::to_owned)
         .collect()
 }
 
+fn parse_network_services(output: &str) -> Vec<String> {
+    trimmed_lines(output)
+        .into_iter()
+        .filter(|line| !line.starts_with("An asterisk"))
+        .filter(|line| !line.starts_with('*'))
+        .collect()
+}
+
 fn parse_manual_dns_output(output: &str) -> ManualDns {
-    let dns_servers: Vec<String> = output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect();
+    let dns_servers = trimmed_lines(output);
 
     if dns_servers
         .iter()
@@ -324,6 +333,32 @@ fn parse_scutil_dns_servers(scutil_output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::os::unix::process::ExitStatusExt;
+    use std::sync::Mutex;
+
+    static QUEUE: Mutex<RefCell<Vec<std::process::Output>>> = Mutex::new(RefCell::new(Vec::new()));
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    /// Pops the next queued stubbed output (FIFO), if any.
+    pub(super) fn next_output() -> Option<std::process::Output> {
+        let guard = QUEUE.lock().unwrap();
+        let mut queue = guard.borrow_mut();
+
+        if !queue.is_empty() {
+            return Some(queue.remove(0));
+        }
+
+        None
+    }
+
+    fn push_output(stdout: &str, status: u8, stderr: &str) {
+        QUEUE.lock().unwrap().borrow_mut().push(std::process::Output {
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+            status: std::process::ExitStatus::from_raw(i32::from(status)),
+        });
+    }
 
     #[test]
     fn parse_network_services_skips_legend_and_disabled_services() {
@@ -387,5 +422,171 @@ resolver #2
                 "2606:4700:4700::1111".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn parse_network_services_returns_empty_for_blank_output() {
+        assert!(parse_network_services("\n\n   \n").is_empty());
+    }
+
+    #[test]
+    fn parse_network_services_skips_legend_line() {
+        let output = "An asterisk (*) denotes that a network service is disabled.\n";
+
+        assert!(parse_network_services(output).is_empty());
+    }
+
+    #[test]
+    fn parse_manual_dns_output_empty_output_returns_servers() {
+        assert_eq!(parse_manual_dns_output(""), ManualDns::Servers(vec![]));
+    }
+
+    #[test]
+    fn parse_scutil_dns_servers_ignores_non_nameserver_lines() {
+        let output = "\
+DNS configuration
+  domain   : example.com
+
+resolver #1
+  nameserver[0] : 192.168.1.1
+";
+
+        assert_eq!(parse_scutil_dns_servers(output), vec!["192.168.1.1".to_string()]);
+    }
+
+    #[test]
+    fn pub_dns_valid_false_for_dhcp() {
+        assert!(!pub_dns_valid(&ManualDns::Dhcp));
+    }
+
+    #[test]
+    fn pub_dns_valid_true_when_all_public_servers_present() {
+        let servers = ManualDns::Servers(PUBLIC_DNS.iter().map(|s| s.to_string()).collect());
+
+        assert!(pub_dns_valid(&servers));
+    }
+
+    #[test]
+    fn pub_dns_valid_false_when_server_missing() {
+        let servers = ManualDns::Servers(vec!["1.1.1.1".to_string(), "2606:4700:4700::1111".to_string()]);
+
+        assert!(!pub_dns_valid(&servers));
+    }
+
+    #[test]
+    fn active_networks_parses_stubbed_output() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("Wi-Fi\n*Disabled\nUSB LAN\n", 0, "");
+
+        assert_eq!(
+            active_networks().unwrap(),
+            vec!["Wi-Fi".to_string(), "USB LAN".to_string()]
+        );
+    }
+
+    #[test]
+    fn active_networks_propagates_command_error() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("", 1, "boom");
+
+        let err = active_networks().unwrap_err();
+        assert!(err.to_string().contains("list network services failed with status"));
+    }
+
+    #[test]
+    fn manual_dns_of_network_parses_servers_and_dhcp() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("1.1.1.1\n8.8.4.4\n", 0, "");
+
+        assert_eq!(
+            manual_dns_of_network("Wi-Fi").unwrap(),
+            ManualDns::Servers(vec!["1.1.1.1".to_string(), "8.8.4.4".to_string()])
+        );
+
+        push_output("There aren't any DNS Servers set on Wi-Fi.\n", 0, "");
+        assert_eq!(manual_dns_of_network("Wi-Fi").unwrap(), ManualDns::Dhcp);
+    }
+
+    #[test]
+    fn current_dns_servers_uses_manual_when_present() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("1.1.1.1\n", 0, "");
+
+        assert_eq!(current_dns_servers("Wi-Fi").unwrap(), vec!["1.1.1.1".to_string()]);
+    }
+
+    #[test]
+    fn current_dns_servers_falls_back_to_dhcp() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("There aren't any DNS Servers set on Wi-Fi.\n", 0, "");
+        push_output("resolver #1\n  nameserver[0] : 192.168.1.1\n", 0, "");
+
+        assert_eq!(current_dns_servers("Wi-Fi").unwrap(), vec!["192.168.1.1".to_string()]);
+    }
+
+    #[test]
+    fn update_dns_servers_succeeds() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("", 0, "");
+
+        assert!(update_dns_servers("Wi-Fi", PUBLIC_DNS).is_ok());
+    }
+
+    #[test]
+    fn update_dns_servers_propagates_error() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("", 1, "permission denied");
+
+        let err = update_dns_servers("Wi-Fi", PUBLIC_DNS).unwrap_err();
+        assert!(err.to_string().contains("permission denied"));
+    }
+
+    #[test]
+    fn apply_dns_config_validates_each_network() {
+        let _serial = SERIAL.lock().unwrap();
+        // active_networks + update + manual for Wi-Fi, then update + manual for USB LAN.
+        push_output("Wi-Fi\nUSB LAN\n", 0, "");
+        push_output("", 0, "");
+        push_output("1.1.1.1\n2606:4700:4700::1111\n8.8.4.4\n2001:4860:4860::8844\n", 0, "");
+        push_output("", 0, "");
+        push_output("1.1.1.1\n2606:4700:4700::1111\n8.8.4.4\n2001:4860:4860::8844\n", 0, "");
+
+        let result = apply_dns_config(
+            PUBLIC_DNS,
+            |network| network.to_string(),
+            pub_dns_valid,
+            |manual_dns| format!(" bad: {manual_dns:?}"),
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_dns_config_reports_validation_failure() {
+        let _serial = SERIAL.lock().unwrap();
+        push_output("Wi-Fi\n", 0, "");
+        push_output("", 0, "");
+        push_output("1.1.1.1\n", 0, "");
+
+        let result = apply_dns_config(
+            PUBLIC_DNS,
+            |network| network.to_string(),
+            pub_dns_valid,
+            |manual_dns| format!(" bad: {manual_dns:?}"),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn perform_dispatches_subcommands() {
+        let _serial = SERIAL.lock().unwrap();
+
+        perform(DnsArgs {
+            pub_dns: false,
+            dhcp: false,
+            list: true,
+        })
+        .unwrap();
     }
 }
