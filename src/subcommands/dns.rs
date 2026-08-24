@@ -317,12 +317,16 @@ fn parse_scutil_dns_servers(scutil_output: &str) -> Vec<String> {
     let mut seen = HashSet::new();
 
     for line in scutil_output.lines() {
-        if line.trim().starts_with("nameserver[") {
-            if let Some((_, ip_part)) = line.split_once(':') {
-                let ip = ip_part.trim().to_string();
-                if seen.insert(ip.clone()) {
-                    dns_servers.push(ip);
-                }
+        let line = line.trim();
+
+        if !line.starts_with("nameserver[") {
+            continue;
+        }
+
+        if let Some((_, ip_part)) = line.split_once(':') {
+            let ip = ip_part.trim().to_string();
+            if seen.insert(ip.clone()) {
+                dns_servers.push(ip);
             }
         }
     }
@@ -581,6 +585,8 @@ resolver #1
     #[test]
     fn perform_dispatches_subcommands() {
         let _serial = SERIAL.lock().unwrap();
+        // Empty network list keeps the test platform-independent (no real DNS commands).
+        push_output("\n", 0, "");
 
         perform(DnsArgs {
             pub_dns: false,
